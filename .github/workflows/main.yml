@@ -23,7 +23,7 @@ name: Whyred Kernel 4.19 - xxKSU + NoMount + CIP
 #               Manager buatan repo ini ditandatangani manager/dummy.keystore (kunci PUBLIK, sertifikat 0x363 / 4359c171...); driver
 #               sudah menerimanya (apk_sign.c). Driver juga menerima kunci KernelSU resmi, KOWX712, dan midori01.
 #               Kecocokan driver<->manager: UAPI harus sama (6 = 6, dicek di log) dan versi driver >= MINIMAL_SUPPORTED_KERNEL manager.
-#               Input ksu_sync_version menyamakan angka versi driver dengan versionCode manager (30000 + jumlah commit - 93).
+#               Input ksu_sync_version menyamakan angka versi driver dengan versionCode manager (30000 + jumlah commit - offset; offset dibaca otomatis dari manager/build.gradle.kts, v3.3.1-51 = 92).
 # NoMount     : v2.3.0-720 (maxsteeel/nomount) built-in (CONFIG_NOMOUNT=y) lewat setup.sh resmi dari tag. Modul metamodule di perangkat
 #               harus ikut v2.3.0 (driver dan modul dirilis berpasangan).
 # Kernel base : source tree di-merge dengan upstream CIP (linux-4.19.y-cip) SEBELUM patch lain (input merge_cip, default aktif),
@@ -44,7 +44,7 @@ on:
         type: boolean
         default: true
       ksu_sync_version:
-        description: "Samakan angka versi driver (KSU_VERSION) dengan versionCode manager dari tag yang sama (30000 + jumlah commit git - 93). Matikan untuk memakai angka bawaan Makefile (32731)."
+        description: "Samakan angka versi driver (KSU_VERSION) dengan versionCode manager dari tag yang sama (30000 + jumlah commit git - offset, offset dibaca dari build.gradle.kts sumber). Matikan untuk memakai angka bawaan Makefile (32731 di v3.3.1-51, tertinggal 1 dari manager 32732)."
         type: boolean
         default: true
       ksu_hook_mode:
@@ -1590,9 +1590,13 @@ jobs:
           else
             echo "::warning::keytool/dummy.keystore tidak tersedia: pemeriksaan tanda tangan manager dilewati"
           fi
-          # 3) Versi: manager = 30000 + jumlah commit - 93 (build.gradle.kts); driver = -DKSU_VERSION di kernel/Makefile.
+          # 3) Versi: manager = 30000 + jumlah commit - OFF (manager/build.gradle.kts; OFF dibaca dari sumber, v3.3.1-51 = 92);
+          #    driver = -DKSU_VERSION di kernel/Makefile (di v3.3.1-51 bernilai 32731, tertinggal 1 dari manager 32732).
           CNT="$(git -C KernelSU rev-list --count "$BASE")"
-          MGR_CODE=$((30000 + CNT - 93))
+          OFF="$(grep -oE '30000 \+ commitCount - [0-9]+' KernelSU/manager/build.gradle.kts | grep -oE '[0-9]+$' | head -1)"
+          [ -n "$OFF" ] || { echo "::error::offset versionCode tidak ditemukan di KernelSU/manager/build.gradle.kts (rumus manager berubah)"; exit 1; }
+          echo "offset versionCode manager (dari build.gradle.kts): ${OFF}"
+          MGR_CODE=$((30000 + CNT - OFF))
           DRV_OLD="$(grep -oE 'DKSU_VERSION=[0-9]+' KernelSU/kernel/Makefile | head -1 | cut -d= -f2)"
           MIN_K="$(grep -oE 'MINIMAL_SUPPORTED_KERNEL = [0-9]+' KernelSU/manager/app/src/main/java/me/weishu/kernelsu/Natives.kt | grep -oE '[0-9]+$' | head -1)"
           echo "== Versi: manager versionCode=${MGR_CODE} (commit=${CNT}), driver Makefile=${DRV_OLD:-?}, minimal kernel yang didukung manager=${MIN_K:-?} =="
