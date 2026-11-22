@@ -19,13 +19,13 @@ name: Whyred Kernel 4.19 - xxKSU + NoMount + CIP
 # fgetpriority: modul uid-filter aerath-stuff/fgetpriority, di-compile BUILT-IN (drivers/fgetpriority, bool), input enable_fgetpriority.
 #               SELinux: kernel/selinux diambil dari ujung master (input ksu_selinux_master, default aktif); sisa driver tetap di tag.
 #               Bila master identik dengan tag, tidak ada yang berubah (dicatat di log).
-#               MANAGER: pakai APK manager dari rilis xxKSU yang SAMA dengan ksu_ref (tag v3.3.1-51), atau bangun dari zip sumber yang sama.
+#               MANAGER: pakai APK manager dari rilis xxKSU yang SAMA dengan ksu_ref (tag v3.3.1-55), atau bangun dari zip sumber yang sama.
 #               Manager buatan repo ini ditandatangani manager/dummy.keystore (kunci PUBLIK, sertifikat 0x363 / 4359c171...); driver
 #               sudah menerimanya (apk_sign.c). Driver juga menerima kunci KernelSU resmi, KOWX712, dan midori01.
 #               Kecocokan driver<->manager: UAPI harus sama (6 = 6, dicek di log) dan versi driver >= MINIMAL_SUPPORTED_KERNEL manager.
-#               Input ksu_sync_version menyamakan angka versi driver dengan versionCode manager (30000 + jumlah commit - offset; offset dibaca otomatis dari manager/build.gradle.kts, v3.3.1-51 = 92).
-# NoMount     : v2.3.0-720 (maxsteeel/nomount) built-in (CONFIG_NOMOUNT=y) lewat setup.sh resmi dari tag. Modul metamodule di perangkat
-#               harus ikut v2.3.0 (driver dan modul dirilis berpasangan).
+#               Input ksu_sync_version menyamakan angka versi driver dengan versionCode manager (30000 + jumlah commit - offset; offset dibaca otomatis dari manager/build.gradle.kts; v3.3.1-51 = 92, untuk v3.3.1-55 dibaca otomatis).
+# NoMount     : v2.3.1 (maxsteeel/nomount) built-in (CONFIG_NOMOUNT=y) lewat setup.sh resmi dari tag. Modul metamodule di perangkat
+#               harus ikut v2.3.1 (driver dan modul dirilis berpasangan).
 # Kernel base : source tree di-merge dengan upstream CIP (linux-4.19.y-cip) SEBELUM patch lain (input merge_cip, default aktif),
 #               lalu bump localversion-st dan cherry-pick 3 commit Maya Kernel.
 # Toolchain   : AOSP Clang r547379 (clang 20.0.0). LTO mengikuti input lto_mode (default full, fallback otomatis).
@@ -35,8 +35,8 @@ on:
   workflow_dispatch:
     inputs:
       ksu_ref:
-        description: "Tag ATAU hash commit xxKSU (backslashxx/KernelSU). Default v3.3.1-51."
-        default: "v3.3.1-51"
+        description: "Tag ATAU hash commit xxKSU (backslashxx/KernelSU). Default v3.3.1-55."
+        default: "v3.3.1-55"
         required: true
         type: string
       ksu_selinux_master:
@@ -44,7 +44,7 @@ on:
         type: boolean
         default: true
       ksu_sync_version:
-        description: "Samakan angka versi driver (KSU_VERSION) dengan versionCode manager dari tag yang sama (30000 + jumlah commit git - offset, offset dibaca dari build.gradle.kts sumber). Matikan untuk memakai angka bawaan Makefile (32731 di v3.3.1-51, tertinggal 1 dari manager 32732)."
+        description: "Samakan angka versi driver (KSU_VERSION) dengan versionCode manager dari tag yang sama (30000 + jumlah commit git - offset, offset dibaca dari build.gradle.kts sumber). Matikan untuk memakai angka bawaan Makefile (bisa tertinggal dari versionCode manager)."
         type: boolean
         default: true
       ksu_hook_mode:
@@ -65,9 +65,9 @@ on:
         default: ""
         type: string
       st_version:
-        description: "Nomor versi source kernel (file localversion-st di root source). 21 = -st21, tampil di uname -r, contoh 4.19.325-st21-kaizen."
-        default: "21"
-        required: true
+        description: "Nomor versi source kernel (file localversion-st). KOSONG (default) = ikut nilai dari source asli (user-why-red) apa adanya, jadi selalu mengikuti commit terbaru mereka. Isi angka (mis. 21 = -st21) hanya untuk menimpa."
+        default: ""
+        required: false
         type: string
       merge_maya:
         description: "Cherry-pick 3 commit Maya Kernel (anythinganywantanywere/android_kernel_xiaomi_sdm660_419: 93669a2, 7058745, 76f94db) ke tree, sesudah merge CIP. Konflik = build berhenti dengan daftar file konflik."
@@ -82,11 +82,11 @@ on:
         default: "vendor/whyred-perf_defconfig"
         required: true
       kernel_name:
-        description: "Nama kernel (untuk nama zip & AnyKernel)"
-        default: "kaizen"
+        description: "Suffix nama kernel. Ditambahkan ke CONFIG_LOCALVERSION defconfig (mis. -San-Kernel-Revenant-R1.1.108-xKaizen), juga dipakai untuk nama zip & AnyKernel."
+        default: "xKaizen"
         required: true
       enable_nomount:
-        description: "Pasang NoMount v2.3.0-720 (built-in). Matikan untuk build pembanding tanpa NoMount."
+        description: "Pasang NoMount v2.3.1 (built-in). Matikan untuk build pembanding tanpa NoMount."
         type: boolean
         default: true
       enable_susfs:
@@ -139,7 +139,8 @@ env:
   ARCH: arm64
   SUBARCH: arm64
 
-  # Nama kernel yang tampil di manager & Info ponsel (uname -r), contoh: 4.19.325-kaizen (mengikuti input kernel_name)
+  # Nama kernel (uname -r) = CONFIG_LOCALVERSION defconfig + "-<kernel_name>"; nilai akhir dihitung di langkah build
+  # dan ditulis ke GITHUB_ENV (contoh: -San-Kernel-Revenant-R1.1.108-xKaizen). Nilai awal ini hanya cadangan.
   KERNEL_LOCALVERSION: "-${{ inputs.kernel_name }}"
 
   # --- Toolchain: sama dengan kernel Starlight (AOSP Clang r547379 = clang 20.0.0) ---
@@ -155,7 +156,7 @@ env:
 
   # --- xxKSU (backslashxx/KernelSU), dipasang dengan clone + checkout tag ---
   KSU_REPO: https://github.com/backslashxx/KernelSU
-  KSU_REF: ${{ inputs.ksu_ref || 'v3.3.1-51' }}
+  KSU_REF: ${{ inputs.ksu_ref || 'v3.3.1-55' }}
   KSU_SELINUX_MASTER: ${{ inputs.ksu_selinux_master == false && 'false' || 'true' }}
   KSU_HOOK_MODE: ${{ inputs.ksu_hook_mode || 'branch_link' }}
   KSU_SYNC_VERSION: ${{ inputs.ksu_sync_version == false && 'false' || 'true' }}
@@ -174,15 +175,16 @@ env:
   CIP_KEEP_TREE: "kernel/sched drivers/rpmsg include/linux/rpmsg.h include/linux/rpmsg fs/mbcache.c include/linux/mbcache.h fs/ext4/xattr.c fs/ext4/xattr.h fs/ext2/xattr.c drivers/soc/qcom drivers/staging drivers/gpu/msm drivers/media/platform/msm techpack arch/arm64/boot/dts arch/arm64/configs"
 
   # --- Versi source kernel (localversion-st) ---
-  ST_VERSION: ${{ inputs.st_version || '21' }}
+  # Kosong = ikut localversion-st dari source asli (dibaca di langkah bump)
+  ST_VERSION: ${{ inputs.st_version }}
 
   # --- Commit Maya Kernel (di-cherry-pick sesudah merge CIP; urutan otomatis menurut tanggal commit) ---
   MAYA_MERGE: ${{ inputs.merge_maya == false && 'false' || 'true' }}
   MAYA_REPO: https://github.com/anythinganywantanywere/android_kernel_xiaomi_sdm660_419
   MAYA_COMMITS: "93669a2a3dedcc238eae8085b90bddcd470e43c2 7058745cc9e1fa8b4f7d5afce748bda2c10c006e 76f94db92c4d0bd067934fa5c252049b14d9f324"
 
-  # --- NoMount (built-in, di-pin ke tag rilis v2.3.0-720) ---
-  NOMOUNT_TAG: v2.3.0-720
+  # --- NoMount (built-in, di-pin ke tag rilis v2.3.1) ---
+  NOMOUNT_TAG: v2.3.1
   NOMOUNT_ENABLE: ${{ inputs.enable_nomount == false && 'false' || 'true' }}
 
   # --- SUSFS (Jack v2.4.0, kernel-side) + 10 opsi; sisi-KernelSU lewat patch 10_enable ---
@@ -356,7 +358,15 @@ jobs:
         run: |
           set -eo pipefail
           git config user.name "ci"; git config user.email "ci@local"
-          case "$ST_VERSION" in ''|*[!0-9]*) echo "::error::st_version harus angka (dapat: '$ST_VERSION')"; exit 1 ;; esac
+          if [ -z "$ST_VERSION" ]; then
+            # Ikut source asli: ambil angka dari localversion-st milik repo, tanpa menimpa
+            ST_VERSION="$(grep -oE '[0-9]+' localversion-st 2>/dev/null | tail -1 || true)"
+            [ -n "$ST_VERSION" ] || { echo "::error::localversion-st tidak ada/tidak berisi angka di source; isi input st_version"; exit 1; }
+            echo "ST_VERSION=$ST_VERSION" >> "$GITHUB_ENV"
+            echo "::notice::st_version kosong: mengikuti source asli (st${ST_VERSION}), tidak ditimpa"
+            exit 0
+          fi
+          case "$ST_VERSION" in *[!0-9]*) echo "::error::st_version harus angka (dapat: '$ST_VERSION')"; exit 1 ;; esac
           if [ -s localversion-st ]; then
             echo "Sebelum: $(cat localversion-st)"
             # Ganti angka terakhir di file, format yang ada (mis. -st20) dipertahankan
@@ -1981,7 +1991,7 @@ jobs:
           tail -30 kernel/kallsyms.c
           grep -n 'kallsyms_on_each_symbol' include/linux/kallsyms.h || echo "(tidak dideklarasikan di kallsyms.h; driver mendeklarasikan sendiri)"
 
-      - name: Setup NoMount (v2.3.0-720)
+      - name: Setup NoMount (v2.3.1)
         if: ${{ env.NOMOUNT_ENABLE == 'true' }}
         working-directory: kernel
         run: |
@@ -2067,7 +2077,12 @@ jobs:
           echo "== Defconfig tree (SEBELUM diubah workflow): LTO / MEMCG / PSI =="
           grep -E '^(# )?CONFIG_(LTO[A-Z_]*|THINLTO|POLLY_CLANG|MEMCG[A-Z_]*|PSI|MODULES|KPROBES|FTRACE|TRACEPOINTS)[= ]' out/.config || echo "(tidak ada opsi terkait di defconfig)"
 
-          # --- Nama kernel (uname -r -> 4.19.325-kaizen, terbaca di KernelSU-Next & Info ponsel) ---
+          # --- Nama kernel: pertahankan CONFIG_LOCALVERSION dari defconfig tree, lalu tambah "-<kernel_name>" ---
+          # (contoh: -San-Kernel-Revenant-R1.1.108 + -xKaizen). uname -r terbaca di manager & Info ponsel.
+          BASE_LV="$(sed -n 's/^CONFIG_LOCALVERSION="\(.*\)"$/\1/p' out/.config | head -1)"
+          KERNEL_LOCALVERSION="${BASE_LV}-${{ inputs.kernel_name }}"
+          echo "KERNEL_LOCALVERSION=${KERNEL_LOCALVERSION}" >> "$GITHUB_ENV"
+          echo "::notice::LOCALVERSION defconfig '${BASE_LV}' -> '${KERNEL_LOCALVERSION}'"
           scripts/config --file out/.config \
             --set-str LOCALVERSION "${KERNEL_LOCALVERSION}" -d LOCALVERSION_AUTO
 
