@@ -148,6 +148,11 @@ env:
   # CLANG_BRANCHES : branch yang dicoba berurutan sampai folder CLANG_REV ditemukan.
   CLANG_REV: "clang-r614150"
   CLANG_BRANCHES: "main android16-release"
+  # Sumber UTAMA: rilis GitHub Neebe3289/aosp-clang (hasil build AOSP Clang 23.0.1 = r614150, folder-nya TIDAK ada di repo googlesource).
+  # CLANG_GH_TAG kosong = rilis terbaru yang tag-nya diawali CLANG_GH_TAG_PREFIX. Isi tag (mis. clang-23.0.1-16464736) untuk dikunci.
+  CLANG_GH_REPO: "Neebe3289/aosp-clang"
+  CLANG_GH_TAG_PREFIX: "clang-23"
+  CLANG_GH_TAG: ""
 
   # --- LTO + Polly (Polly hanya aktif bila toolchain mendukung) ---
   # Hanya diaktifkan bila simbol Kconfig / flag compiler-nya didukung tree & toolchain; sisanya dilewati dengan peringatan di log.
@@ -1446,13 +1451,49 @@ jobs:
           git commit -q -m "Add fgetpriority ${FGP_COMMIT:0:8} (built-in)"
           echo "::notice::fgetpriority ${FGP_COMMIT:0:8} terintegrasi (built-in)"
 
-      - name: Siapkan toolchain (AOSP Clang r614150 / clang 23.0.1)
+      - name: Siapkan toolchain (AOSP Clang 23.0.1 / r614150)
         run: |
           set -eo pipefail
           GIT_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
           rm -rf clang aosp-clang
           OK=""
+          # 1) UTAMA: rilis GitHub (aset arsip toolchain). Dipilih otomatis: aset .tar.*/.tgz/.zip, bukan sha/sig/txt.
+          gh_clang() {
+            local API="https://api.github.com/repos/${CLANG_GH_REPO}/releases?per_page=30" REL TAG URL NAME
+            curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 30 \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -o /tmp/rels.json "$API" || return 1
+            if [ -n "${CLANG_GH_TAG}" ]; then
+              REL="$(jq -c --arg t "$CLANG_GH_TAG" '[.[]|select(.tag_name==$t)][0]' /tmp/rels.json)"
+            else
+              REL="$(jq -c --arg p "$CLANG_GH_TAG_PREFIX" '[.[]|select((.tag_name|startswith($p)) and (.draft|not))][0]' /tmp/rels.json)"
+            fi
+            [ -n "$REL" ] && [ "$REL" != null ] || { echo "rilis tidak ditemukan (tag='${CLANG_GH_TAG}' prefix='${CLANG_GH_TAG_PREFIX}')"; return 1; }
+            TAG="$(echo "$REL" | jq -r .tag_name)"
+            echo "Rilis dipilih: $TAG"; echo "$REL" | jq -r '.assets[]|"  aset: \(.name) (\(.size) byte)"'
+            URL="$(echo "$REL" | jq -r '[.assets[]|select(.name|test("\\.(tar\\.(gz|xz|zst|bz2)|tgz|zip)$"))|select(.name|test("sha|sig|md5";"i")|not)][0].browser_download_url')"
+            NAME="$(basename "$URL")"
+            [ -n "$URL" ] && [ "$URL" != null ] || { echo "tidak ada aset arsip di rilis $TAG"; return 1; }
+            echo "Unduh: $NAME"
+            curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "/tmp/${NAME}" "$URL" || return 1
+            rm -rf clang clang-x && mkdir -p clang-x
+            case "$NAME" in
+              *.zip) unzip -q "/tmp/${NAME}" -d clang-x || return 1 ;;
+              *) tar -xf "/tmp/${NAME}" -C clang-x || return 1 ;;
+            esac
+            rm -f "/tmp/${NAME}"
+            # arsip bisa berisi folder pembungkus: cari bin/clang lalu jadikan root-nya "clang"
+            local BIN ROOT
+            BIN="$(find clang-x -maxdepth 4 -path '*/bin/clang' \( -type f -o -type l \) | head -1)"
+            [ -n "$BIN" ] || { echo "bin/clang tidak ditemukan di arsip"; find clang-x -maxdepth 2 | head -20; return 1; }
+            ROOT="$(dirname "$(dirname "$BIN")")"
+            mv "$ROOT" clang && rm -rf clang-x
+            [ -x clang/bin/clang ] || return 1
+            OK="github:${TAG}"
+          }
+          GH_TOKEN="${{ github.token }}"
+          if gh_clang; then :; else echo "::warning::rilis GitHub tidak bisa dipakai, coba googlesource"; rm -rf clang clang-x; fi
           for BR in $CLANG_BRANCHES; do
+            [ -z "$OK" ] || break
             echo "== Ambil ${CLANG_REV} dari branch ${BR} =="
             # 1) tarball langsung dari googlesource (+archive)
             rm -rf clang && mkdir -p clang
@@ -1476,7 +1517,7 @@ jobs:
           done
           rm -f /tmp/clang.tar.gz
           if [ -z "$OK" ]; then
-            echo "::error::${CLANG_REV} tidak bisa diambil dari branch (${CLANG_BRANCHES}) di ${GIT_URL}. Cek koneksi/branch, atau ubah CLANG_BRANCHES di blok env."
+            echo "::error::Toolchain tidak bisa diambil: rilis GitHub ${CLANG_GH_REPO} (prefix ${CLANG_GH_TAG_PREFIX}) gagal, dan ${CLANG_REV} tidak ada di branch (${CLANG_BRANCHES}) ${GIT_URL}. Lihat log di atas."
             exit 1
           fi
           echo "Toolchain diambil lewat: ${OK}"
