@@ -28,7 +28,7 @@ name: Whyred Kernel 4.19 - xxKSU + NoMount + CIP
 #               harus ikut v2.3.1 (driver dan modul dirilis berpasangan).
 # Kernel base : source tree di-merge dengan upstream CIP (linux-4.19.y-cip) SEBELUM patch lain (input merge_cip, default aktif),
 #               lalu bump localversion-st dan cherry-pick 3 commit Maya Kernel.
-# Toolchain   : AOSP Clang r547379 (clang 20.0.0). LTO mengikuti input lto_mode (default full, fallback otomatis).
+# Toolchain   : AOSP Clang r614150 (clang 23.0.1, sama dengan build kernel asli). LTO mengikuti input lto_mode (default full, fallback otomatis).
 # Tree source TIDAK boleh membawa root/SUSFS bawaan: workflow berhenti jika terdeteksi.
 
 on:
@@ -143,11 +143,11 @@ env:
   # dan ditulis ke GITHUB_ENV (contoh: -San-Kernel-Revenant-R1.1.108-xKaizen). Nilai awal ini hanya cadangan.
   KERNEL_LOCALVERSION: "-${{ inputs.kernel_name }}"
 
-  # --- Toolchain: sama dengan kernel Starlight (AOSP Clang r547379 = clang 20.0.0) ---
+  # --- Toolchain: AOSP Clang r614150 = clang 23.0.1 (sama dengan build kernel asli; mengenal -Wno-default-const-init-unsafe) ---
   # CLANG_REV      : nama folder prebuilt di repo prebuilts/clang/host/linux-x86.
   # CLANG_BRANCHES : branch yang dicoba berurutan sampai folder CLANG_REV ditemukan.
-  CLANG_REV: "clang-r547379"
-  CLANG_BRANCHES: "android16-release main"
+  CLANG_REV: "clang-r614150"
+  CLANG_BRANCHES: "main android16-release"
 
   # --- LTO + Polly (Polly hanya aktif bila toolchain mendukung) ---
   # Hanya diaktifkan bila simbol Kconfig / flag compiler-nya didukung tree & toolchain; sisanya dilewati dengan peringatan di log.
@@ -1446,7 +1446,7 @@ jobs:
           git commit -q -m "Add fgetpriority ${FGP_COMMIT:0:8} (built-in)"
           echo "::notice::fgetpriority ${FGP_COMMIT:0:8} terintegrasi (built-in)"
 
-      - name: Siapkan toolchain (AOSP Clang r547379, sama dengan kernel Starlight)
+      - name: Siapkan toolchain (AOSP Clang r614150 / clang 23.0.1)
         run: |
           set -eo pipefail
           GIT_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
@@ -1486,9 +1486,9 @@ jobs:
           echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
           "$GITHUB_WORKSPACE/clang/bin/clang" --version | sed -n '1p'
           "$GITHUB_WORKSPACE/clang/bin/ld.lld" --version | sed -n '1p'
-          # Kernel Starlight: "Android (13174946, +pgo, +bolt, +lto, +mlgo, based on r547379) clang version 20.0.0"
-          "$GITHUB_WORKSPACE/clang/bin/clang" --version | sed -n '1p' | grep -q 'r547379' \
-            || echo "::warning::versi clang bukan r547379 (cek baris versi di atas)"
+          # Kernel asli: "Android (16836431, based on r614150) clang version 23.0.1"
+          "$GITHUB_WORKSPACE/clang/bin/clang" --version | sed -n '1p' | grep -q 'r614150' \
+            || echo "::warning::versi clang bukan r614150 (cek baris versi di atas)"
 
       - name: Cache ccache
         uses: actions/cache@v5
@@ -2045,6 +2045,28 @@ jobs:
             echo "::notice::Swap gagal dibuat, lanjut tanpa swap"
           fi
           free -h
+
+      - name: Amankan flag warning clang baru (-Wno-default-const-init-unsafe)
+        working-directory: kernel
+        run: |
+          set -eo pipefail
+          # Flag ini baru dikenal clang 21+. Toolchain lama (clang 20, r547379) tidak mengenalnya; dengan clang 23 aman, langkah ini tetap sebagai pengaman: flag yang dipasang polos (tanpa cek compiler)
+          # membuat SEMUA kompilasi gagal: "unknown warning option ... [-Werror,-Wunknown-warning-option]".
+          # Asalnya dari source/CIP (Makefile), jadi dibungkus cc-disable-warning supaya hanya dipakai bila compiler mengenalinya.
+          echo "== Lokasi flag sebelum diperbaiki =="
+          git grep -n 'default-const-init-unsafe' -- 'Makefile' '*/Makefile' 'Makefile.*' '*/Makefile.*' '*.mk' || echo "(tidak ada di Makefile)"
+          FILES="$(git grep -l -E -- '-Wno-default-const-init-unsafe' -- 'Makefile' '*/Makefile' 'Makefile.*' '*/Makefile.*' '*.mk' || true)"
+          for F in $FILES; do
+            sed -i -E 's/(^|[[:space:]])-Wno-default-const-init-unsafe/\1$(call cc-disable-warning, default-const-init-unsafe)/g' "$F"
+            echo "diperbaiki: $F"
+          done
+          echo "== Sesudah =="
+          git grep -n 'default-const-init-unsafe' -- 'Makefile' '*/Makefile' 'Makefile.*' '*/Makefile.*' '*.mk' || echo "(tidak ada)"
+          # Pengaman: bila masih ada yang polos (mis. di berkas non-Makefile), cetak peringatan jelas
+          if git grep -n -E -- '[^)]\s-Wno-default-const-init-unsafe' -- 'Makefile' '*/Makefile' 'Makefile.*' '*/Makefile.*' '*.mk' >/dev/null 2>&1; then
+            echo "::warning::-Wno-default-const-init-unsafe polos masih ada di Makefile (lihat daftar di atas)"
+          fi
+          git grep -n 'default-const-init-unsafe' -- . ':!*Makefile*' ':!*.mk' | head -5 || true
 
       - name: Build kernel
         working-directory: kernel
